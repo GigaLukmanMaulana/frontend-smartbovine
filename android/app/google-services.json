@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "897665279105",
+    "firebase_url": "https://smartsapi-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "smartsapi",
+    "storage_bucket": "smartsapi.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:897665279105:android:a07a40191eb19e035a5980",
+        "android_client_info": {
+          "package_name": "com.example.front"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBANsmfeok-zXq-PvIWHPhrBl5CAW5xs_I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
