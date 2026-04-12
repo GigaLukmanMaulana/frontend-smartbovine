@@ -274,13 +274,16 @@ class _KelolaIotScreenState extends State<KelolaIotScreen> {
                               String signal = lat != 0 ? 'Strong' : 'Weak'; 
                               String battery = dev.containsKey('bat') ? '${dev['bat']}%' : '85%';
                               bool isActive = true; // Anggap aktif karena node ada, atau kasih logika lain.
+                              bool isRecording = dev['is_recording'] ?? false;
                               
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 16.0),
                                 child: _buildDeviceCardUI(
                                   id: id,
                                   sapi: sapi,
+                                  pathKey: pathKey,
                                   isActive: isActive,
+                                  isRecording: isRecording,
                                   signal: signal,
                                   battery: battery,
                                   onDelete: () => _deleteDevice(pathKey),
@@ -348,7 +351,9 @@ class _KelolaIotScreenState extends State<KelolaIotScreen> {
   Widget _buildDeviceCardUI({
     required String id,
     required String sapi,
+    required String pathKey,
     required bool isActive,
+    required bool isRecording,
     required String battery,
     required String signal,
     required VoidCallback onDelete,
@@ -410,6 +415,49 @@ class _KelolaIotScreenState extends State<KelolaIotScreen> {
               const SizedBox(width: 4),
               Text(signal, style: const TextStyle(fontSize: 12)),
             ],
+          ),
+          const SizedBox(height: 16),
+          // Toggle Data Latih
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: isRecording ? const Color(0xFFE8F5E9) : const Color(0xFFF5F5F5),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: isRecording ? Colors.green : Colors.grey.shade300),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Mode Rekam (Data Latih)',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        color: isRecording ? Colors.green.shade700 : Colors.grey.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      isRecording ? 'Merekam ke MySQL (Tiap 5 Detik)...' : 'Mati (Tidak Merekam)',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: isRecording ? Colors.green.shade600 : Colors.grey.shade500,
+                      ),
+                    ),
+                  ],
+                ),
+                Switch(
+                  value: isRecording,
+                  activeColor: Colors.green,
+                  onChanged: (val) {
+                    FirebaseDatabase.instance.ref(pathKey).update({'is_recording': val});
+                  },
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 16),
           // Tombol Hapus saja

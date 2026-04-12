@@ -22,49 +22,79 @@ class _DashboardState extends State<Dashboard> {
   // Hasil prediksi AI
   String _statusKesehatan = "Memuat...";
   String _statusAktivitas = "Memuat...";
-  double _predictedSuhu = 0.0; // Menyimpan suhu yang benar-benar dipakai saat prediksi AI
-  Timer? _timer;
+  double _predictedSuhu = 0.0;
 
-  // Variabel pembantu untuk menangkap data terbaru dari Firebase
+  // ✅ FIX 1: Hapus Timer, ganti dengan StreamSubscription
+  StreamSubscription? _firebaseSubscription;
+  Stream<DatabaseEvent>? _sensorStream;
+
+  // Variabel sensor — ✅ FIX 2: Tambah suhu_lingkungan & lembap
   double _lastSuhu = 0.0;
+  double _lastSuhuLingkungan = 0.0; // ← BARU
+  double _lastLembap = 0.0;         // ← BARU
   double _lastAccX = 0.0;
   double _lastAccY = 0.0;
   double _lastAccZ = 0.0;
 
-  // Inisialisasi referensi ke path "sapi_1" di Firebase
   final DatabaseReference _dbRef = FirebaseDatabase.instance.ref("sapi_1");
 
   @override
   void initState() {
     super.initState();
-    _fetchAIPredict(); // fetch pertama kali
-    // Refresh setiap 10 detik
-    _timer = Timer.periodic(const Duration(seconds: 10), (timer) {
+
+    // Simpan reference stream agar StreamBuilder tidak selalu mereset subskripsi setiap kali setState dipanggil.
+    // Karena kita listen() di dua tempat (disini dan di StreamBuilder), kita wajib jadikan Broadcast Stream.
+    _sensorStream = _dbRef.onValue.asBroadcastStream();
+
+    // ✅ FIX 1: Panggil AI setiap kali data Firebase berubah (event-driven)
+    _firebaseSubscription = _sensorStream!.listen((event) {
+      if (event.snapshot.value == null) return;
+
+      final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+
+      // ✅ FIX 2: Simpan semua data sensor termasuk suhu_lingkungan & lembap
+      _lastSuhu            = (data['suhu'] ?? 0.0).toDouble();
+      _lastSuhuLingkungan  = (data['suhu_lingkungan'] ?? 0.0).toDouble();
+      _lastLembap          = (data['lembap'] ?? 0.0).toDouble();
+      _lastAccX            = (data['acc_x'] ?? 0.0).toDouble();
+      _lastAccY            = (data['acc_y'] ?? 0.0).toDouble();
+      _lastAccZ            = (data['acc_z'] ?? 0.0).toDouble();
+
+      // Panggil AI setiap ada data baru dari Firebase
       _fetchAIPredict();
     });
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    // ✅ FIX 1: Cancel subscription saat widget di-dispose
+    _firebaseSubscription?.cancel();
     super.dispose();
   }
 
   Future<void> _fetchAIPredict() async {
     try {
-      // Simpan nilai suhu saat ini untuk dicatat sebagai suhu saat hasil AI keluar
       double suhuYangDikirim = _lastSuhu;
 
+      // ✅ FIX 2: Kirim semua data sensor (tidak ada lagi yang dummy)
       final response = await http.get(
-        Uri.parse('http://10.60.235.129:8000/api/predict?suhu=$suhuYangDikirim&acc_x=$_lastAccX&acc_y=$_lastAccY&acc_z=$_lastAccZ'), 
-      ).timeout(const Duration(seconds: 20));
+        Uri.parse(
+          'http://192.168.18.102:8000/api/predict'
+          '?suhu=$_lastSuhu'
+          '&suhu_lingkungan=$_lastSuhuLingkungan'
+          '&lembap=$_lastLembap'
+          '&acc_x=$_lastAccX'
+          '&acc_y=$_lastAccY'
+          '&acc_z=$_lastAccZ',
+        ),
+      ).timeout(const Duration(seconds: 5)); // ✅ Timeout diperkecil dari 20 → 5 detik
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         setState(() {
           _statusKesehatan = data['status_kesehatan'] ?? 'Tidak diketahui';
           _statusAktivitas = data['status_aktivitas'] ?? 'Tidak diketahui';
-          _predictedSuhu = suhuYangDikirim; // Simpan nilai suhu yang benar-benar menghasilkan status ini
+          _predictedSuhu   = suhuYangDikirim;
         });
       }
     } catch (e) {
@@ -76,7 +106,6 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
-  // Tentukan warna berdasarkan status kesehatan AI
   Color _getStatusColor() {
     switch (_statusKesehatan) {
       case 'Sehat':
@@ -90,7 +119,6 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
-  // Tentukan icon berdasarkan status kesehatan AI
   IconData _getStatusIcon() {
     switch (_statusKesehatan) {
       case 'Sehat':
@@ -104,7 +132,6 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
-  // Tentukan pesan berdasarkan status kesehatan AI
   String _getStatusMessage() {
     switch (_statusKesehatan) {
       case 'Sehat':
@@ -159,7 +186,7 @@ class _DashboardState extends State<Dashboard> {
         ],
       ),
       body: StreamBuilder(
-        stream: _dbRef.onValue,
+        stream: _sensorStream,
         builder: (context, AsyncSnapshot<DatabaseEvent> snapshot) {
           if (snapshot.hasError) {
             return Center(child: Text("Error: ${snapshot.error}"));
@@ -169,7 +196,6 @@ class _DashboardState extends State<Dashboard> {
             return const Center(child: CircularProgressIndicator());
           }
 
-          // Parsing data dari Firebase
           final Object? dataValue = snapshot.data?.snapshot.value;
           if (dataValue == null) {
             return const Center(child: Text("Data sensor tidak ditemukan"));
@@ -177,24 +203,14 @@ class _DashboardState extends State<Dashboard> {
 
           final data = Map<String, dynamic>.from(dataValue as Map);
 
-          // Ambil nilai dari key yang dikirim ESP32
           double suhuTubuh = (data['suhu'] ?? 0.0).toDouble();
-          double lembap = (data['lembap'] ?? 0.0).toDouble();
-          double accX = (data['acc_x'] ?? 0.0).toDouble();
-          double accY = (data['acc_y'] ?? 0.0).toDouble();
-          double accZ = (data['acc_z'] ?? 0.0).toDouble();
+          double lembap    = (data['lembap'] ?? 0.0).toDouble();
+          double accX      = (data['acc_x'] ?? 0.0).toDouble();
+          double accY      = (data['acc_y'] ?? 0.0).toDouble();
+          double accZ      = (data['acc_z'] ?? 0.0).toDouble();
 
-          // Simpan sementara untuk ditembakkan ke AI saat fungsi timer bekerja
-          _lastSuhu = suhuTubuh;
-          _lastAccX = accX;
-          _lastAccY = accY;
-          _lastAccZ = accZ;
-
-          // Format Waktu Update
           String waktuUpdate = DateFormat('HH:mm:ss').format(DateTime.now());
-
-          // Warna & icon dari hasil AI
-          Color statusColor = _getStatusColor();
+          Color statusColor  = _getStatusColor();
 
           return SingleChildScrollView(
             padding: const EdgeInsets.all(16),
@@ -281,48 +297,7 @@ class _DashboardState extends State<Dashboard> {
                 ),
                 const SizedBox(height: 12),
 
-                // --- Card Status Aktivitas AI ---
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.blue.shade100),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _statusAktivitas == 'Aktif'
-                            ? Icons.directions_run
-                            : Icons.bedtime_outlined,
-                        color: Colors.blue,
-                      ),
-                      const SizedBox(width: 10),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Status Aktivitas (AI)',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          Text(
-                            _statusAktivitas,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
+
 
                 // --- Grid Monitoring ---
                 GridView.count(
@@ -350,9 +325,9 @@ class _DashboardState extends State<Dashboard> {
                       waktuUpdate,
                     ),
                     _buildInfoCard(
-                      'Aktivitas (AccX)',
-                      accX.abs() > 0.5 ? 'Aktif' : 'Diam',
-                      Icons.directions_run,
+                      'Tingkat Aktivitas',
+                      _statusAktivitas,
+                      _statusAktivitas.contains('Aktif') ? Icons.directions_run : Icons.bedtime_outlined,
                       Colors.purple,
                       waktuUpdate,
                     ),
@@ -410,9 +385,8 @@ class _DashboardState extends State<Dashboard> {
               context,
               MaterialPageRoute(builder: (context) => const KelolaIotScreen()),
             ).then((_) {
-              // Optionally reset index if needed, or keep it when pushing a new route
               setState(() {
-                _selectedIndex = 0; // Return selection to Dashboard when popped back
+                _selectedIndex = 0;
               });
             });
           } else {
@@ -453,7 +427,7 @@ class _DashboardState extends State<Dashboard> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'HASIL DETEKSI AI: $status',
+                      'Status Kesehatan: $status',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: color,
@@ -515,8 +489,7 @@ class _DashboardState extends State<Dashboard> {
             const SizedBox(height: 2),
             Text(
               value,
-              style:
-                  const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
             ),
           ],
         ),

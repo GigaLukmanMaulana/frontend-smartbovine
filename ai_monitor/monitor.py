@@ -21,6 +21,8 @@ CARA MENDAPATKAN TOKEN:
 import sys
 import io
 import warnings
+import pandas as pd
+import time
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
 warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
@@ -97,7 +99,10 @@ def predict_kesehatan(sensor_data):
             float(sensor_data.get('gyro_y', 0)),
             float(sensor_data.get('gyro_z', 0))
         ]]
-        result = model_kesehatan.predict(features)[0]
+        
+        kolom_fitur = ['suhu', 'suhu_lingkungan', 'lembap', 'acc_x', 'acc_y', 'acc_z', 'gyro_x', 'gyro_y', 'gyro_z']
+        df_features = pd.DataFrame(features, columns=kolom_fitur)
+        result = model_kesehatan.predict(df_features)[0]
         return result
     except Exception as e:
         print(f"[ERROR] Gagal prediksi: {e}")
@@ -235,28 +240,40 @@ def on_sensor_change(event):
     waktu_str = datetime.now().strftime('%H:%M:%S')
     print(f"[{waktu_str}] [{sapi_key}] Suhu: {suhu} C -> AI: {status}")
 
-    # Kirim notifikasi HANYA jika status berubah menjadi Sakit/Heat Stress
-    prev_status = last_status.get(sapi_key, 'Sehat')
+    # Timestamp waktu ini
+    current_time = time.time()
+    
+    # Kirim notifikasi jika status baru MERUPAKAN Sakit/Heat Stress DAN (status berubah ATAU jeda waktu sudah > 5 menit sejak terakhir peringatan)
+    prev_status = last_status.get(sapi_key, {}).get('status', 'Sehat')
+    last_notif_time = last_status.get(sapi_key, {}).get('time', 0)
 
-    if status in ['Sakit', 'Heat Stress'] and status != prev_status:
-        result = kirim_notifikasi(nama_sapi, status, suhu)
+    if status in ['Sakit', 'Heat Stress']:
+        if status != prev_status or (current_time - last_notif_time > 300): # 300 detik = 5 menit
+            result = kirim_notifikasi(nama_sapi, status, suhu)
 
-        if result:
-            # Simpan riwayat ke Firebase
-            notif_ref = db.reference('notifikasi')
-            notif_ref.push({
-                'sapi_id': sapi_key,
-                'nama_sapi': nama_sapi,
-                'status': status,
-                'suhu': suhu,
-                'timestamp': {'.sv': 'timestamp'},
-                'dibaca': False,
-            })
-            print(f"         [SAVE] Riwayat notifikasi disimpan ke Firebase")
-    elif status == 'Sehat' and prev_status in ['Sakit', 'Heat Stress']:
-        print(f"[{waktu_str}] [OK] [{sapi_key}] Status kembali SEHAT (sebelumnya: {prev_status})")
+            if result:
+                # Simpan riwayat ke Firebase
+                notif_ref = db.reference('notifikasi')
+                notif_ref.push({
+                    'sapi_id': sapi_key,
+                    'nama_sapi': nama_sapi,
+                    'status': status,
+                    'suhu': suhu,
+                    'timestamp': {'.sv': 'timestamp'},
+                    'dibaca': False,
+                })
+                print(f"         [SAVE] Riwayat notifikasi disimpan ke Firebase")
+            
+            # Update memori pengiriman terakhir
+            last_status[sapi_key] = {'status': status, 'time': current_time}
+        else:
+            # Tetap update statusnya tanpa mengubah waktu terakhir notif terkirim (sedang masa cooldown)
+            last_status[sapi_key]['status'] = status
 
-    last_status[sapi_key] = status
+    elif status == 'Sehat':
+        if prev_status in ['Sakit', 'Heat Stress']:
+            print(f"[{waktu_str}] [OK] [{sapi_key}] Status kembali SEHAT (sebelumnya: {prev_status})")
+        last_status[sapi_key] = {'status': status, 'time': 0}
 
 # ========================
 # FUNGSI TEST NOTIFIKASI
@@ -358,26 +375,32 @@ if __name__ == '__main__':
 
                 print(f"[{waktu_str}] [{sapi_key}] Suhu: {suhu} C -> AI: {status}")
 
-                # Kirim notifikasi jika status berubah menjadi Sakit/Heat Stress
-                prev_status = last_status.get(sapi_key, 'Sehat')
+                # Sistem Pengingat Cerdas (Cooldown) sama seperti root Node
+                current_time = time.time()
+                prev_status = last_status.get(sapi_key, {}).get('status', 'Sehat')
+                last_notif_time = last_status.get(sapi_key, {}).get('time', 0)
 
-                if status in ['Sakit', 'Heat Stress'] and status != prev_status:
-                    result = kirim_notifikasi(nama_sapi, status, suhu)
-                    if result:
-                        notif_ref = db.reference('notifikasi')
-                        notif_ref.push({
-                            'sapi_id': sapi_key,
-                            'nama_sapi': nama_sapi,
-                            'status': status,
-                            'suhu': suhu,
-                            'timestamp': {'.sv': 'timestamp'},
-                            'dibaca': False,
-                        })
-                        print(f"         [SAVE] Riwayat disimpan ke Firebase")
-                elif status == 'Sehat' and prev_status in ['Sakit', 'Heat Stress']:
-                    print(f"[{waktu_str}] [OK] [{sapi_key}] Kembali SEHAT")
-
-                last_status[sapi_key] = status
+                if status in ['Sakit', 'Heat Stress']:
+                    if status != prev_status or (current_time - last_notif_time > 300):
+                        result = kirim_notifikasi(nama_sapi, status, suhu)
+                        if result:
+                            notif_ref = db.reference('notifikasi')
+                            notif_ref.push({
+                                'sapi_id': sapi_key,
+                                'nama_sapi': nama_sapi,
+                                'status': status,
+                                'suhu': suhu,
+                                'timestamp': {'.sv': 'timestamp'},
+                                'dibaca': False,
+                            })
+                            print(f"         [SAVE] Riwayat disimpan ke Firebase")
+                        last_status[sapi_key] = {'status': status, 'time': current_time}
+                    else:
+                        last_status[sapi_key]['status'] = status
+                elif status == 'Sehat':
+                    if prev_status in ['Sakit', 'Heat Stress']:
+                        print(f"[{waktu_str}] [OK] [{sapi_key}] Kembali SEHAT")
+                    last_status[sapi_key] = {'status': status, 'time': 0}
             return listener
 
         for sapi in SAPI_NODES:
