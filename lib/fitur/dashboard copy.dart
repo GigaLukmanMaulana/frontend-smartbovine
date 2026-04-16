@@ -74,6 +74,9 @@ class _DashboardState extends State<Dashboard> {
           double accX = (data['acc_x'] ?? 0.0).toDouble();
           double accY = (data['acc_y'] ?? 0.0).toDouble();
           double accZ = (data['acc_z'] ?? 0.0).toDouble();
+          double latitude  = (data['latitude'] ?? 0.0).toDouble();
+double longitude = (data['longitude'] ?? 0.0).toDouble();
+
 
           // Format Waktu Update
           String waktuUpdate = DateFormat('HH:mm:ss').format(DateTime.now());
@@ -201,12 +204,13 @@ class _DashboardState extends State<Dashboard> {
                       waktuUpdate,
                     ),
                     _buildInfoCard(
-                      'Status GPS',
-                      data['lat'] != 0 ? 'Locked' : 'No Signal',
-                      Icons.location_on,
-                      data['lat'] != 0 ? Colors.green : Colors.grey,
-                      waktuUpdate,
-                    ),
+  'Status GPS',
+  latitude != 0.0 ? '${latitude.toStringAsFixed(4)}, ${longitude.toStringAsFixed(4)}' : 'Mencari Sinyal...',
+  Icons.location_on,
+  latitude != 0.0 ? Colors.green : Colors.grey,
+  waktuUpdate,
+),
+
                   ],
                 ),
                 const SizedBox(height: 24),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import '../widgets/navbar.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'scan_feses_screen.dart';
 import 'notifikasi.dart';
 import 'kelolaiot.dart';
@@ -8,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+import '../services/auth_service.dart';
 
 class Dashboard extends StatefulWidget {
   const Dashboard({super.key});
@@ -18,6 +20,10 @@ class Dashboard extends StatefulWidget {
 
 class _DashboardState extends State<Dashboard> {
   int _selectedIndex = 0;
+
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  String _namaUser = "User";
+  String _inisialUser = "U";
 
   // Hasil prediksi AI
   String _statusKesehatan = "Memuat...";
@@ -41,6 +47,7 @@ class _DashboardState extends State<Dashboard> {
   @override
   void initState() {
     super.initState();
+    _loadUserData();
 
     // Simpan reference stream agar StreamBuilder tidak selalu mereset subskripsi setiap kali setState dipanggil.
     // Karena kita listen() di dua tempat (disini dan di StreamBuilder), kita wajib jadikan Broadcast Stream.
@@ -65,6 +72,14 @@ class _DashboardState extends State<Dashboard> {
     });
   }
 
+  Future<void> _loadUserData() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _namaUser = prefs.getString("nama") ?? "Peternak";
+      _inisialUser = _namaUser.isNotEmpty ? _namaUser[0].toUpperCase() : "P";
+    });
+  }
+
   @override
   void dispose() {
     // ✅ FIX 1: Cancel subscription saat widget di-dispose
@@ -79,7 +94,7 @@ class _DashboardState extends State<Dashboard> {
       // ✅ FIX 2: Kirim semua data sensor (tidak ada lagi yang dummy)
       final response = await http.get(
         Uri.parse(
-          'http://192.168.18.102:8000/api/predict'
+          '${AuthService.baseUrl}/predict'
           '?suhu=$_lastSuhu'
           '&suhu_lingkungan=$_lastSuhuLingkungan'
           '&lembap=$_lastLembap'
@@ -148,7 +163,47 @@ class _DashboardState extends State<Dashboard> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: const Color(0xFFF8FBF9),
+      drawer: Drawer(
+        child: Column(
+          children: [
+            UserAccountsDrawerHeader(
+              decoration: const BoxDecoration(color: Color(0xFF00796B)),
+              currentAccountPicture: CircleAvatar(
+                backgroundColor: Colors.white,
+                child: Text(
+                  _inisialUser,
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF00796B),
+                  ),
+                ),
+              ),
+              accountName: Text(
+                _namaUser,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              accountEmail: const Text("Administrator SmartBovine"),
+            ),
+            ListTile(
+              leading: const Icon(Icons.home_outlined),
+              title: const Text('Beranda'),
+              onTap: () => Navigator.pop(context),
+            ),
+            ListTile(
+              leading: const Icon(Icons.logout, color: Colors.red),
+              title: const Text('Keluar', style: TextStyle(color: Colors.red)),
+              onTap: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.clear();
+                if (mounted) Navigator.pushReplacementNamed(context, '/login');
+              },
+            ),
+          ],
+        ),
+      ),
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
@@ -176,11 +231,20 @@ class _DashboardState extends State<Dashboard> {
               child: Icon(Icons.notifications_none, color: Colors.black87),
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.only(right: 16),
-            child: CircleAvatar(
-              backgroundColor: Color(0xFF00796B),
-              child: Text('J', style: TextStyle(color: Colors.white)),
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: GestureDetector(
+              onTap: () => _scaffoldKey.currentState?.openDrawer(),
+              child: CircleAvatar(
+                backgroundColor: const Color(0xFF00796B),
+                child: Text(
+                  _inisialUser,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
             ),
           ),
         ],
@@ -208,6 +272,9 @@ class _DashboardState extends State<Dashboard> {
           double accX      = (data['acc_x'] ?? 0.0).toDouble();
           double accY      = (data['acc_y'] ?? 0.0).toDouble();
           double accZ      = (data['acc_z'] ?? 0.0).toDouble();
+          
+          double latitude  = (data['latitude'] ?? 0.0).toDouble();
+          double longitude = (data['longitude'] ?? 0.0).toDouble();
 
           String waktuUpdate = DateFormat('HH:mm:ss').format(DateTime.now());
           Color statusColor  = _getStatusColor();
@@ -333,9 +400,9 @@ class _DashboardState extends State<Dashboard> {
                     ),
                     _buildInfoCard(
                       'Status GPS',
-                      data['lat'] != 0 ? 'Locked' : 'No Signal',
+                      latitude != 0.0 ? '${latitude.toStringAsFixed(4)}, ${longitude.toStringAsFixed(4)}' : 'Mencari Sinyal...',
                       Icons.location_on,
-                      data['lat'] != 0 ? Colors.green : Colors.grey,
+                      latitude != 0.0 ? Colors.green : Colors.grey,
                       waktuUpdate,
                     ),
                   ],
