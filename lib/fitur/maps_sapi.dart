@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import '../widgets/navbar.dart'; // Import navbar kamu
-import 'scan_feses_screen.dart'; // Import halaman scan
-import '../services/auth_service.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'dart:async';
+import '../widgets/navbar.dart';
+import 'scan_feses_screen.dart';
 
 class MapSapiScreen extends StatefulWidget {
   const MapSapiScreen({super.key});
@@ -17,52 +16,133 @@ class MapSapiScreen extends StatefulWidget {
 class _MapSapiScreenState extends State<MapSapiScreen> {
   final MapController _mapController = MapController();
   List<Marker> _markers = [];
+  List<CircleMarker> _geofenceCircles = [];
   bool _isLoading = true;
-  int _selectedIndex = 1; // Set ke 1 karena ini halaman Peta
+  int _selectedIndex = 1;
+
+  // Geofencing: titik pusat & radius dari Firebase
+  LatLng _centerPoint = const LatLng(-6.5715, 107.7587);
+  double _radiusKm = 5.0;
+
+  StreamSubscription? _firebaseSubscription;
+  final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
 
   @override
   void initState() {
     super.initState();
-    _fetchSapiLocations();
+    _listenToFirebase();
   }
 
-  // AMBIL DATA DARI LARAVEL
-  // 1. UPDATE WARNA MARKER JADI HIJAU
-  Future<void> _fetchSapiLocations() async {
-    try {
-      final response = await http.get(
-        Uri.parse('${AuthService.baseUrl}/sapi-locations'),
-        headers: {"Accept": "application/json"},
-      );
+  @override
+  void dispose() {
+    _firebaseSubscription?.cancel();
+    super.dispose();
+  }
 
-      if (response.statusCode == 200) {
-        List data = json.decode(response.body);
-        setState(() {
-          _markers = data.map((sapi) {
-            return Marker(
-              point: LatLng(
-                double.parse(sapi['lat'].toString()),
-                double.parse(sapi['lng'].toString()),
-              ),
-              width: 50,
-              height: 50,
-              child: GestureDetector(
-                onTap: () => _showSapiDetail(sapi),
-                child: const Icon(
-                  Icons.location_on,
-                  color: Colors.green, // UBAH KE HIJAU
-                  size: 40,
+  // AMBIL DATA REAL-TIME DARI FIREBASE
+  void _listenToFirebase() {
+    _firebaseSubscription = _dbRef.onValue.listen((DatabaseEvent event) {
+      final data = event.snapshot.value as Map<dynamic, dynamic>?;
+
+      if (data != null) {
+        List<Marker> newMarkers = [];
+        List<CircleMarker> newCircles = [];
+        LatLng centerLatLng = _centerPoint;
+        double currentRadius = _radiusKm;
+
+        // =============================================
+        // 1. BACA KONFIGURASI KANDANG DARI FIREBASE
+        // =============================================
+        if (data.containsKey('konfig_kandang')) {
+          final konfig = data['konfig_kandang'] as Map;
+          double? latPusat = double.tryParse(konfig['lat_pusat']?.toString() ?? '');
+          double? lngPusat = double.tryParse(konfig['lng_pusat']?.toString() ?? '');
+          double? radiusObj = double.tryParse(konfig['radius_km']?.toString() ?? '');
+
+          if (latPusat != null && lngPusat != null) {
+            centerLatLng = LatLng(latPusat, lngPusat);
+          }
+          if (radiusObj != null) {
+            currentRadius = radiusObj;
+          }
+        }
+
+        // =============================================
+        // 2. GAMBAR LINGKARAN PAGAR (GEOFENCE)
+        // =============================================
+        newCircles.add(
+          CircleMarker(
+            point: centerLatLng,
+            color: Colors.green.withOpacity(0.08),
+            borderStrokeWidth: 2,
+            borderColor: Colors.green.withOpacity(0.5),
+            useRadiusInMeter: true,
+            radius: currentRadius * 1000, // KM ke Meter
+          ),
+        );
+
+        // Alat ukur jarak (Haversine)
+        const Distance distanceCalc = Distance();
+
+        // =============================================
+        // 3. PROSES SETIAP SAPI
+        // =============================================
+        data.forEach((key, value) {
+          if (key.toString().startsWith('sapi') && value is Map) {
+            double? lat = double.tryParse(value['latitude']?.toString() ?? '');
+            double? lng = double.tryParse(value['longitude']?.toString() ?? '');
+
+            if (lat != null && lng != null) {
+              LatLng posisiSapi = LatLng(lat, lng);
+
+              // Hitung jarak sapi ke pusat kandang
+              double jarakMeter = distanceCalc.as(LengthUnit.Meter, centerLatLng, posisiSapi);
+              double jarakKm = jarakMeter / 1000;
+              bool keluarPagar = jarakMeter > (currentRadius * 1000);
+
+              newMarkers.add(
+                Marker(
+                  point: posisiSapi,
+                  width: 50,
+                  height: 50,
+                  child: GestureDetector(
+                    onTap: () => _showSapiDetail({
+                      'id_sapi': key.toString(),
+                      'lat': lat.toString(),
+                      'lng': lng.toString(),
+                      'suhu': value['suhu']?.toString() ?? 'N/A',
+                      'keluar_pagar': keluarPagar,
+                      'jarak_km': jarakKm.toStringAsFixed(2),
+                    }),
+                    child: Icon(
+                      Icons.location_on,
+                      color: keluarPagar ? Colors.red : Colors.green,
+                      size: 40,
+                    ),
+                  ),
                 ),
-              ),
-            );
-          }).toList();
-          _isLoading = false;
+              );
+            }
+          }
         });
+
+        if (mounted) {
+          setState(() {
+            _markers = newMarkers;
+            _geofenceCircles = newCircles;
+            _centerPoint = centerLatLng;
+            _radiusKm = currentRadius;
+            _isLoading = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
       }
-    } catch (e) {
-      print("Error fetch: $e");
-      setState(() => _isLoading = false);
-    }
+    });
   }
 
   // 2. UPDATE TAMPILAN POPUP (MODAL BOTTOM SHEET)
@@ -136,6 +216,31 @@ class _MapSapiScreenState extends State<MapSapiScreen> {
               "Limousin Cross • Jantan • 2.5 Tahun",
               style: TextStyle(color: Colors.grey),
             ),
+
+            // PERINGATAN KELUAR PAGAR
+            if (sapi['keluar_pagar'] == true) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 22),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        "PERINGATAN: Keluar Pagar! (${sapi['jarak_km']} KM dari kandang)",
+                        style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
 
             const SizedBox(height: 20),
 
@@ -303,12 +408,25 @@ class _MapSapiScreenState extends State<MapSapiScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        actions: [
-          // Pindahkan tombol refresh ke sini agar FAB utama tetap untuk Scan
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Color(0xFF00695C)),
-            onPressed: _fetchSapiLocations,
-          ),
+        actions: const [
+          // Icon Live Streaming / Realtime Indicator
+          Padding(
+            padding: EdgeInsets.only(right: 16),
+            child: Row(
+              children: [
+                CircleAvatar(radius: 4, backgroundColor: Colors.green),
+                SizedBox(width: 5),
+                Text(
+                  "LIVE",
+                  style: TextStyle(
+                    color: Colors.green,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          )
         ],
       ),
       body: _isLoading
@@ -317,8 +435,8 @@ class _MapSapiScreenState extends State<MapSapiScreen> {
             )
           : FlutterMap(
               mapController: _mapController,
-              options: const MapOptions(
-                initialCenter: LatLng(-6.5715, 107.7587), // Koordinat Subang
+              options: MapOptions(
+                initialCenter: _centerPoint,
                 initialZoom: 13.0,
               ),
               children: [
@@ -327,6 +445,7 @@ class _MapSapiScreenState extends State<MapSapiScreen> {
                   userAgentPackageName:
                       'SmartBovine_Map_App_v1_Development_(kontak_admin@smartbovine.com)',
                 ),
+                CircleLayer(circles: _geofenceCircles),
                 MarkerLayer(markers: _markers),
               ],
             ),

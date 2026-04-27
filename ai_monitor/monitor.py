@@ -33,6 +33,7 @@ import numpy as np
 import time
 import json
 import os
+import math
 from datetime import datetime
 
 # ========================
@@ -56,7 +57,7 @@ DEVICE_TOKENS = [
 ]
 
 # Node sapi yang dipantau (tambah jika ada sapi baru)
-SAPI_NODES = ['sapi_1']
+SAPI_NODES = ['sapi_1', 'sapi_2', 'sapi_3']
 
 # ========================
 # INISIALISASI
@@ -81,6 +82,35 @@ print(f"[OK] Device tokens terdaftar: {len(DEVICE_TOKENS)} HP")
 
 # Simpan status terakhir tiap sapi agar tidak kirim notif berulang
 last_status = {}
+
+# Simpan status geofence terakhir tiap sapi
+last_geofence_status = {}
+
+# ========================
+# FUNGSI HITUNG JARAK (HAVERSINE)
+# ========================
+def hitung_jarak_km(lat1, lon1, lat2, lon2):
+    """Hitung jarak antara 2 titik GPS dalam kilometer (rumus Haversine)"""
+    R = 6371  # Radius bumi dalam kilometer
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    return R * c
+
+def ambil_konfig_kandang():
+    """Ambil konfigurasi geofence dari Firebase"""
+    try:
+        konfig_ref = db.reference('konfig_kandang')
+        konfig = konfig_ref.get()
+        if konfig and isinstance(konfig, dict):
+            lat = float(konfig.get('lat_pusat', 0))
+            lng = float(konfig.get('lng_pusat', 0))
+            radius = float(konfig.get('radius_km', 5))
+            return lat, lng, radius
+    except Exception as e:
+        print(f"[WARN] Gagal baca konfig_kandang: {e}")
+    return None, None, None
 
 # ========================
 # FUNGSI PREDIKSI AI
@@ -120,6 +150,9 @@ def kirim_notifikasi(sapi_id, status, suhu):
         elif status == 'Heat Stress':
             title = 'PERINGATAN: Heat Stress Terdeteksi!'
             body = f'{sapi_id} - Suhu: {suhu} C. Sapi mengalami tekanan panas.'
+        elif status == 'Keluar Area':
+            title = 'PERINGATAN: Sapi Keluar Area Kandang!'
+            body = f'{sapi_id} - Jarak: {suhu} KM dari pusat kandang. Segera cek lokasi!'
         else:
             return None
 
@@ -362,45 +395,78 @@ if __name__ == '__main__':
                 if sensor_data is None or not isinstance(sensor_data, dict):
                     return
 
-                if 'suhu' not in sensor_data:
-                    return
-
                 suhu = sensor_data.get('suhu', 0)
                 nama_sapi = sensor_data.get('nama_sapi', sapi_key)
-
-                # Prediksi AI
-                status = predict_kesehatan(sensor_data)
-                if status is None:
-                    return
-
-                print(f"[{waktu_str}] [{sapi_key}] Suhu: {suhu} C -> AI: {status}")
-
-                # Sistem Pengingat Cerdas (Cooldown) sama seperti root Node
                 current_time = time.time()
-                prev_status = last_status.get(sapi_key, {}).get('status', 'Sehat')
-                last_notif_time = last_status.get(sapi_key, {}).get('time', 0)
 
-                if status in ['Sakit', 'Heat Stress']:
-                    if status != prev_status or (current_time - last_notif_time > 300):
-                        result = kirim_notifikasi(nama_sapi, status, suhu)
-                        if result:
-                            notif_ref = db.reference('notifikasi')
-                            notif_ref.push({
-                                'sapi_id': sapi_key,
-                                'nama_sapi': nama_sapi,
-                                'status': status,
-                                'suhu': suhu,
-                                'timestamp': {'.sv': 'timestamp'},
-                                'dibaca': False,
-                            })
-                            print(f"         [SAVE] Riwayat disimpan ke Firebase")
-                        last_status[sapi_key] = {'status': status, 'time': current_time}
-                    else:
-                        last_status[sapi_key]['status'] = status
-                elif status == 'Sehat':
-                    if prev_status in ['Sakit', 'Heat Stress']:
-                        print(f"[{waktu_str}] [OK] [{sapi_key}] Kembali SEHAT")
-                    last_status[sapi_key] = {'status': status, 'time': 0}
+                # =============================================
+                # BAGIAN 1: PREDIKSI AI KESEHATAN
+                # =============================================
+                if 'suhu' in sensor_data:
+                    status = predict_kesehatan(sensor_data)
+                    if status is not None:
+                        print(f"[{waktu_str}] [{sapi_key}] Suhu: {suhu} C -> AI: {status}")
+                        prev_status = last_status.get(sapi_key, {}).get('status', 'Sehat')
+                        last_notif_time = last_status.get(sapi_key, {}).get('time', 0)
+                        if status in ['Sakit', 'Heat Stress']:
+                            if status != prev_status or (current_time - last_notif_time > 300):
+                                result = kirim_notifikasi(nama_sapi, status, suhu)
+                                if result:
+                                    notif_ref = db.reference('notifikasi')
+                                    notif_ref.push({
+                                        'sapi_id': sapi_key,
+                                        'nama_sapi': nama_sapi,
+                                        'status': status,
+                                        'suhu': suhu,
+                                        'timestamp': {'.sv': 'timestamp'},
+                                        'dibaca': False,
+                                    })
+                                    print(f"         [SAVE] Riwayat disimpan ke Firebase")
+                                last_status[sapi_key] = {'status': status, 'time': current_time}
+                            else:
+                                last_status[sapi_key]['status'] = status
+                        elif status == 'Sehat':
+                            if prev_status in ['Sakit', 'Heat Stress']:
+                                print(f"[{waktu_str}] [OK] [{sapi_key}] Kembali SEHAT")
+                            last_status[sapi_key] = {'status': status, 'time': 0}
+
+                # =============================================
+                # CEK GEOFENCING (KELUAR AREA KANDANG)
+                # =============================================
+                lat_sapi = sensor_data.get('latitude', None)
+                lon_sapi = sensor_data.get('longitude', None)
+
+                if lat_sapi is not None and lon_sapi is not None:
+                    lat_pusat, lng_pusat, radius_km = ambil_konfig_kandang()
+
+                    if lat_pusat is not None and lng_pusat is not None:
+                        jarak = hitung_jarak_km(lat_pusat, lng_pusat, float(lat_sapi), float(lon_sapi))
+                        keluar_pagar = jarak > radius_km
+
+                        prev_geo = last_geofence_status.get(sapi_key, {}).get('keluar', False)
+                        last_geo_time = last_geofence_status.get(sapi_key, {}).get('time', 0)
+
+                        if keluar_pagar:
+                            print(f"[{waktu_str}] [GEOFENCE] [{sapi_key}] Jarak: {jarak:.2f} KM -> KELUAR AREA!")
+                            if not prev_geo or (current_time - last_geo_time > 300):
+                                result = kirim_notifikasi(nama_sapi, 'Keluar Area', f'{jarak:.2f}')
+                                if result:
+                                    notif_ref = db.reference('notifikasi')
+                                    notif_ref.push({
+                                        'sapi_id': sapi_key,
+                                        'nama_sapi': nama_sapi,
+                                        'status': 'Keluar Area',
+                                        'suhu': round(jarak, 2),
+                                        'timestamp': {'.sv': 'timestamp'},
+                                        'dibaca': False,
+                                    })
+                                    print(f"         [SAVE] Riwayat geofence disimpan ke Firebase")
+                                last_geofence_status[sapi_key] = {'keluar': True, 'time': current_time}
+                        else:
+                            if prev_geo:
+                                print(f"[{waktu_str}] [GEOFENCE OK] [{sapi_key}] Kembali ke area kandang ({jarak:.2f} KM)")
+                            last_geofence_status[sapi_key] = {'keluar': False, 'time': 0}
+
             return listener
 
         for sapi in SAPI_NODES:
