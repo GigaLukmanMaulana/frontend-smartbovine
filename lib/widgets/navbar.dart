@@ -62,8 +62,14 @@ class CustomNavbar extends StatelessWidget {
 
         Navigator.of(context).pushAndRemoveUntil(
           PageRouteBuilder(
-            pageBuilder: (context, a1, a2) => targetScreen,
-            transitionDuration: Duration.zero,
+            pageBuilder: (context, animation, secondaryAnimation) => targetScreen,
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              return FadeTransition(
+                opacity: CurveTween(curve: Curves.easeInOut).animate(animation),
+                child: child,
+              );
+            },
+            transitionDuration: const Duration(milliseconds: 300),
           ),
           (route) => false,
         );

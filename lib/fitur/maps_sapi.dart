@@ -1,3 +1,5 @@
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -5,6 +7,7 @@ import 'package:firebase_database/firebase_database.dart';
 import 'dart:async';
 import '../widgets/navbar.dart';
 import 'scan_feses_screen.dart';
+import '../services/perangkat_service.dart';
 
 class MapSapiScreen extends StatefulWidget {
   const MapSapiScreen({super.key});
@@ -20,17 +23,35 @@ class _MapSapiScreenState extends State<MapSapiScreen> {
   bool _isLoading = true;
   int _selectedIndex = 1;
 
+  // State untuk mode edit geofence
+  bool _isEditingGeofence = false;
+  LatLng _tempCenter = const LatLng(-6.5715, 107.7587);
+  double _tempRadius = 5.0;
+
   // Geofencing: titik pusat & radius dari Firebase
   LatLng _centerPoint = const LatLng(-6.5715, 107.7587);
   double _radiusKm = 5.0;
 
   StreamSubscription? _firebaseSubscription;
   final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
+  Map<String, dynamic> _perangkatDataMap = {};
 
   @override
   void initState() {
     super.initState();
+    _fetchPerangkatMap();
     _listenToFirebase();
+  }
+
+  Future<void> _fetchPerangkatMap() async {
+    final data = await PerangkatService.getPerangkat();
+    if (mounted) {
+      setState(() {
+        for (var device in data) {
+          _perangkatDataMap[device['id_perangkat']] = device['sapi'] ?? {};
+        }
+      });
+    }
   }
 
   @override
@@ -147,6 +168,14 @@ class _MapSapiScreenState extends State<MapSapiScreen> {
 
   // 2. UPDATE TAMPILAN POPUP (MODAL BOTTOM SHEET)
   void _showSapiDetail(Map sapi) {
+    final idSapi = sapi['id_sapi']; // e.g., sapi_1
+    final profileSapi = _perangkatDataMap[idSapi] ?? {};
+    
+    final jenisSapi = profileSapi['jenis_sapi'] ?? 'Tidak diketahui';
+    final jenisKelamin = profileSapi['jenis_kelamin'] ?? '-';
+    final umur = profileSapi['umur_bulan'] ?? '?';
+    final labelProfile = '$jenisSapi • $jenisKelamin • $umur Bulan';
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true, // Agar layout lebih fleksibel
@@ -212,9 +241,9 @@ class _MapSapiScreenState extends State<MapSapiScreen> {
                 ),
               ],
             ),
-            const Text(
-              "Limousin Cross • Jantan • 2.5 Tahun",
-              style: TextStyle(color: Colors.grey),
+            Text(
+              labelProfile,
+              style: const TextStyle(color: Colors.grey),
             ),
 
             // PERINGATAN KELUAR PAGAR
@@ -397,6 +426,111 @@ class _MapSapiScreenState extends State<MapSapiScreen> {
     );
   }
 
+  // Simpan Geofencing ke Backend
+  Future<void> _saveGeofence() async {
+    try {
+      final response = await http.post(
+        Uri.parse('${PerangkatService.baseUrl}/geofencing'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode({
+          'latitude': _tempCenter.latitude,
+          'longitude': _tempCenter.longitude,
+          'radius': _tempRadius,
+          'nama_area': 'Kandang Utama'
+        }),
+      );
+      
+      if (!mounted) return;
+      
+      if (response.statusCode == 200) {
+        setState(() {
+          _isEditingGeofence = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Geofence berhasil diperbarui!'), backgroundColor: Colors.green),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Gagal memperbarui geofence'), backgroundColor: Colors.red),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  // WIDGET PANEL EDIT GEOFENCE DI ATAS PETA
+  Widget _buildGeofenceEditor() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 4))
+        ]
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('Mode Edit Geofence', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 5),
+          const Text('Ketuk area pada peta untuk memindahkan titik pusat pagar.', style: TextStyle(color: Colors.grey, fontSize: 12), textAlign: TextAlign.center),
+          const SizedBox(height: 15),
+          Row(
+            children: [
+              const Text('Radius:'),
+              Expanded(
+                child: Slider(
+                  value: _tempRadius,
+                  min: 0.1,
+                  max: 20.0,
+                  activeColor: const Color(0xFF00695C),
+                  onChanged: (val) {
+                    setState(() {
+                      _tempRadius = val;
+                    });
+                  },
+                ),
+              ),
+              Text('${_tempRadius.toStringAsFixed(1)} KM', style: const TextStyle(fontWeight: FontWeight.bold)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () {
+                    setState(() {
+                      _isEditingGeofence = false;
+                    });
+                  },
+                  child: const Text('Batal', style: TextStyle(color: Colors.grey)),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00695C)),
+                  onPressed: _saveGeofence,
+                  child: const Text('Simpan', style: TextStyle(color: Colors.white)),
+                ),
+              ),
+            ],
+          )
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -408,7 +542,19 @@ class _MapSapiScreenState extends State<MapSapiScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        actions: const [
+        actions: [
+          IconButton(
+            icon: Icon(Icons.settings, color: _isEditingGeofence ? const Color(0xFF00695C) : Colors.black87),
+            onPressed: () {
+              setState(() {
+                _isEditingGeofence = !_isEditingGeofence;
+                if (_isEditingGeofence) {
+                  _tempCenter = _centerPoint;
+                  _tempRadius = _radiusKm;
+                }
+              });
+            },
+          ),
           // Icon Live Streaming / Realtime Indicator
           Padding(
             padding: EdgeInsets.only(right: 16),
@@ -433,20 +579,62 @@ class _MapSapiScreenState extends State<MapSapiScreen> {
           ? const Center(
               child: CircularProgressIndicator(color: Color(0xFF00695C)),
             )
-          : FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: _centerPoint,
-                initialZoom: 13.0,
-              ),
+          : Stack(
               children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName:
-                      'SmartBovine_Map_App_v1_Development_(kontak_admin@smartbovine.com)',
+                FlutterMap(
+                  mapController: _mapController,
+                  options: MapOptions(
+                    initialCenter: _centerPoint,
+                    initialZoom: 13.0,
+                    onTap: (tapPosition, point) {
+                      if (_isEditingGeofence) {
+                        setState(() {
+                          _tempCenter = point;
+                        });
+                      }
+                    },
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName:
+                          'SmartBovine_Map_App_v1_Development_(kontak_admin@smartbovine.com)',
+                    ),
+                    if (!_isEditingGeofence) CircleLayer(circles: _geofenceCircles),
+                    if (_isEditingGeofence)
+                      CircleLayer(
+                        circles: [
+                          CircleMarker(
+                            point: _tempCenter,
+                            color: Colors.blue.withOpacity(0.15),
+                            borderStrokeWidth: 2,
+                            borderColor: Colors.blue,
+                            useRadiusInMeter: true,
+                            radius: _tempRadius * 1000,
+                          )
+                        ],
+                      ),
+                    MarkerLayer(markers: _markers),
+                    if (_isEditingGeofence)
+                      MarkerLayer(
+                        markers: [
+                          Marker(
+                            point: _tempCenter,
+                            width: 60,
+                            height: 60,
+                            child: const Icon(Icons.location_on, color: Colors.blue, size: 50),
+                          )
+                        ],
+                      ),
+                  ],
                 ),
-                CircleLayer(circles: _geofenceCircles),
-                MarkerLayer(markers: _markers),
+                if (_isEditingGeofence)
+                  Positioned(
+                    bottom: 20, // Menghindari ketutupan navbar/floating button
+                    left: 0,
+                    right: 0,
+                    child: _buildGeofenceEditor(),
+                  ),
               ],
             ),
 

@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthService {
   // Ganti IP ini sesuai IP Laptop kamu (Satu Wi-Fi)
-  static const String baseUrl = "http://10.85.89.129:8000/api"; //Kalau pakai HP bisa diganti ip laptop
+  static const String baseUrl = "http://10.137.253.129:8000/api"; //Kalau pakai HP bisa diganti ip laptop
 
   // 2. Gunakan static agar bisa dipanggil AuthService.saveSensorData(...)
   static Future<bool> saveSensorData(Map<String, dynamic> data) async {
