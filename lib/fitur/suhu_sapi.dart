@@ -12,8 +12,10 @@ import 'scan_feses_screen.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../widgets/navbar.dart';
+import '../widgets/riwayat_skeleton.dart';
 import '../services/auth_service.dart';
 import '../services/perangkat_service.dart';
+import 'dashboard.dart';
 
 class ReportScreen extends StatefulWidget {
   const ReportScreen({super.key});
@@ -49,6 +51,18 @@ class _ReportScreenState extends State<ReportScreen> {
 
   List<dynamic> _perangkatList = [];
   String? _selectedPerangkatId;
+
+  // Zoom state untuk grafik suhu
+  double _suhuMinX = 0;
+  double _suhuMaxX = 20;
+  double _suhuBaseRange = 20;
+  double _suhuLastScale = 1.0;
+
+  // Zoom state untuk grafik aktivitas
+  double _actMinX = 0;
+  double _actMaxX = 20;
+  double _actBaseRange = 20;
+  double _actLastScale = 1.0;
 
   @override
   void initState() {
@@ -98,6 +112,10 @@ class _ReportScreenState extends State<ReportScreen> {
         setState(() {
           _historyData = json.decode(response.body);
           _isLoading = false;
+          // Reset zoom sesuai jumlah data
+          _suhuMinX = 0;
+          _suhuMaxX = _historyData.length.toDouble().clamp(5, double.infinity);
+          _suhuBaseRange = _suhuMaxX;
         });
       }
     } catch (e) {
@@ -152,6 +170,10 @@ class _ReportScreenState extends State<ReportScreen> {
           // Apply additional filtering for display
           _filteredActivityData = _filterActivitiesForDisplay(filteredData);
           _isActivityLoading = false;
+          // Reset zoom aktivitas
+          _actMinX = 0;
+          _actMaxX = filteredData.length.toDouble().clamp(5, double.infinity);
+          _actBaseRange = _actMaxX;
           // Update cache with filtered data
           _activityCache[cacheKey] = filteredData;
           _lastActivityFetch = now;
@@ -203,21 +225,22 @@ class _ReportScreenState extends State<ReportScreen> {
         elevation: 0,
         leading: IconButton(
           icon: Icon(Icons.arrow_back, color: primaryColor),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => const Dashboard()),
+            );
+          },
         ),
         title: Text(
           'Riwayat & Laporan',
           style: TextStyle(color: primaryColor, fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.more_vert, color: primaryColor),
-            onPressed: () {},
-          ),
-        ],
       ),
-      body: RefreshIndicator(
+      body: _isLoading
+        ? const RiwayatSkeleton()
+        : RefreshIndicator(
         onRefresh: _refreshCurrentView,
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -238,10 +261,14 @@ class _ReportScreenState extends State<ReportScreen> {
                         child: DropdownButton<String>(
                           value: _selectedPerangkatId,
                           isExpanded: true,
-                          icon: const Icon(Icons.arrow_drop_down),
+                          icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF00695C)),
+                          dropdownColor: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          elevation: 4,
                           style: const TextStyle(
                             color: Colors.black87,
-                            fontSize: 13,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
                           ),
                           onChanged: (String? newValue) {
                             if (newValue != null) {
@@ -272,8 +299,6 @@ class _ReportScreenState extends State<ReportScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 15),
-                  _buildCalendarButton(),
                 ],
               ),
               const SizedBox(height: 15),
@@ -332,29 +357,7 @@ class _ReportScreenState extends State<ReportScreen> {
 
   // --- WIDGET COMPONENTS ---
 
-  Widget _buildCalendarButton() {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(15),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 5,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Stack(
-        alignment: Alignment.topRight,
-        children: [
-          Icon(Icons.calendar_month_outlined, color: primaryColor),
-          const CircleAvatar(radius: 4, backgroundColor: Colors.red),
-        ],
-      ),
-    );
-  }
+
 
   Widget _buildRangeInfo() {
     return Row(
@@ -464,7 +467,72 @@ class _ReportScreenState extends State<ReportScreen> {
             ],
           ),
           const SizedBox(height: 25),
-          SizedBox(height: 200, child: LineChart(sampleData())),
+          // Zoom indicator + reset
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.pinch, size: 14, color: Colors.grey.shade400),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Cubit untuk zoom periode • Geser untuk navigasi',
+                    style: TextStyle(fontSize: 10, color: Colors.grey.shade400),
+                  ),
+                ],
+              ),
+              if (_suhuMaxX - _suhuMinX < _suhuBaseRange - 1)
+                GestureDetector(
+                  onTap: () => setState(() {
+                    _suhuMinX = 0;
+                    _suhuMaxX = _suhuBaseRange;
+                  }),
+                  child: Row(
+                    children: [
+                      Icon(Icons.zoom_out_map, size: 14, color: primaryColor),
+                      const SizedBox(width: 2),
+                      Text('Reset', style: TextStyle(fontSize: 10, color: primaryColor, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onScaleStart: (_) => _suhuLastScale = 1.0,
+            onScaleUpdate: (details) {
+              if (_historyData.isEmpty) return;
+              final maxLen = _historyData.length.toDouble();
+              final range = _suhuMaxX - _suhuMinX;
+              final center = (_suhuMinX + _suhuMaxX) / 2;
+
+              if (details.scale != 1.0) {
+                // Pinch zoom
+                final scaleDiff = details.scale - _suhuLastScale;
+                var newRange = range * (1 - scaleDiff * 0.5);
+                newRange = newRange.clamp(5.0, maxLen);
+                setState(() {
+                  _suhuMinX = (center - newRange / 2).clamp(0, maxLen - 5);
+                  _suhuMaxX = (_suhuMinX + newRange).clamp(5, maxLen);
+                  _suhuLastScale = details.scale;
+                });
+              } else {
+                // Pan (geser)
+                final dx = -details.focalPointDelta.dx * range / 300;
+                setState(() {
+                  var newMin = (_suhuMinX + dx).clamp(0.0, maxLen - range);
+                  _suhuMinX = newMin;
+                  _suhuMaxX = newMin + range;
+                });
+              }
+            },
+            child: SizedBox(
+              height: 200, 
+              child: ClipRect(
+                child: LineChart(sampleData())
+              )
+            ),
+          ),
         ],
       ),
     );
@@ -664,7 +732,69 @@ class _ReportScreenState extends State<ReportScreen> {
             style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
           const SizedBox(height: 15),
-          SizedBox(height: 200, child: LineChart(activityChartData())),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.pinch, size: 14, color: Colors.grey.shade400),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Cubit untuk zoom • Geser untuk navigasi',
+                    style: TextStyle(fontSize: 10, color: Colors.grey.shade400),
+                  ),
+                ],
+              ),
+              if (_actMaxX - _actMinX < _actBaseRange - 1)
+                GestureDetector(
+                  onTap: () => setState(() {
+                    _actMinX = 0;
+                    _actMaxX = _actBaseRange;
+                  }),
+                  child: Row(
+                    children: [
+                      Icon(Icons.zoom_out_map, size: 14, color: primaryColor),
+                      const SizedBox(width: 2),
+                      Text('Reset', style: TextStyle(fontSize: 10, color: primaryColor, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onScaleStart: (_) => _actLastScale = 1.0,
+            onScaleUpdate: (details) {
+              if (_activityData.isEmpty) return;
+              final maxLen = _activityData.length.toDouble();
+              final range = _actMaxX - _actMinX;
+              final center = (_actMinX + _actMaxX) / 2;
+
+              if (details.scale != 1.0) {
+                final scaleDiff = details.scale - _actLastScale;
+                var newRange = range * (1 - scaleDiff * 0.5);
+                newRange = newRange.clamp(5.0, maxLen);
+                setState(() {
+                  _actMinX = (center - newRange / 2).clamp(0, maxLen - 5);
+                  _actMaxX = (_actMinX + newRange).clamp(5, maxLen);
+                  _actLastScale = details.scale;
+                });
+              } else {
+                final dx = -details.focalPointDelta.dx * range / 300;
+                setState(() {
+                  var newMin = (_actMinX + dx).clamp(0.0, maxLen - range);
+                  _actMinX = newMin;
+                  _actMaxX = newMin + range;
+                });
+              }
+            },
+            child: SizedBox(
+              height: 200, 
+              child: ClipRect(
+                child: LineChart(activityChartData())
+              )
+            ),
+          ),
         ],
       ),
     );
@@ -1380,9 +1510,33 @@ class _ReportScreenState extends State<ReportScreen> {
 
   LineChartData sampleData() {
     return LineChartData(
-      lineTouchData: const LineTouchData(
-        enabled: false,
-      ), // Disable touch untuk performa
+      clipData: const FlClipData.all(), // Mencegah grafik keluar batas saat dizoom
+      minX: _suhuMinX,
+      maxX: _suhuMaxX,
+      lineTouchData: LineTouchData(
+        enabled: true,
+        touchTooltipData: LineTouchTooltipData(
+          getTooltipItems: (touchedSpots) {
+            return touchedSpots.map((spot) {
+              String waktu = '';
+              if (spot.x.toInt() < _historyData.length) {
+                try {
+                  DateTime date = DateTime.parse(_historyData[spot.x.toInt()]['created_at']);
+                  waktu = DateFormat('HH:mm').format(date);
+                } catch (_) {}
+              }
+              return LineTooltipItem(
+                '${spot.y.toStringAsFixed(1)}°C\n$waktu',
+                const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              );
+            }).toList();
+          },
+        ),
+      ),
       gridData: FlGridData(
         show: true,
         drawVerticalLine: false,
@@ -1398,19 +1552,32 @@ class _ReportScreenState extends State<ReportScreen> {
           sideTitles: SideTitles(
             showTitles: true,
             reservedSize: 30,
+            interval: 1, // evaluate every point
             getTitlesWidget: (value, meta) {
               if (_historyData.isEmpty ||
                   value.toInt() >= _historyData.length ||
                   value < 0)
                 return const Text('');
+                
+              final range = _suhuMaxX - _suhuMinX;
+              final displayInterval = (range / 5).ceil().clamp(1, 100);
+              
+              if (value.toInt() % displayInterval != 0) {
+                 return const Text('');
+              }
+
               DateTime date = DateTime.parse(
                 _historyData[value.toInt()]['created_at'],
               );
+              
+              // Jika range data yang tampil besar, tampilkan tanggal, jika kecil tampilkan jam
+              String format = range > 50 ? 'dd MMM' : 'HH:mm';
+
               return SideTitleWidget(
                 meta: meta,
                 space: 10,
                 child: Text(
-                  DateFormat('HH:mm').format(date),
+                  DateFormat(format).format(date),
                   style: const TextStyle(color: Colors.grey, fontSize: 9),
                 ),
               );
@@ -1564,7 +1731,27 @@ class _ReportScreenState extends State<ReportScreen> {
 
   LineChartData activityChartData() {
     return LineChartData(
-      lineTouchData: const LineTouchData(enabled: false),
+      clipData: const FlClipData.all(), // Mencegah grafik keluar batas saat dizoom
+      minX: _actMinX,
+      maxX: _actMaxX,
+      lineTouchData: LineTouchData(
+        enabled: true,
+        touchTooltipData: LineTouchTooltipData(
+          getTooltipItems: (touchedSpots) {
+            return touchedSpots.map((spot) {
+              final status = spot.y == 1 ? 'Aktif' : 'Diam';
+              return LineTooltipItem(
+                status,
+                const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              );
+            }).toList();
+          },
+        ),
+      ),
       gridData: FlGridData(
         show: true,
         drawVerticalLine: false,
@@ -1580,13 +1767,38 @@ class _ReportScreenState extends State<ReportScreen> {
           sideTitles: SideTitles(
             showTitles: true,
             reservedSize: 30,
+            interval: 1,
             getTitlesWidget: (value, meta) {
-              if (value.toInt() % 5 != 0) return const Text('');
+              if (_activityData.isEmpty ||
+                  value.toInt() >= _activityData.length ||
+                  value < 0)
+                return const Text('');
+                
+              final range = _actMaxX - _actMinX;
+              final displayInterval = (range / 5).ceil().clamp(1, 100);
+
+              if (value.toInt() % displayInterval != 0) return const Text('');
+              
+              // Ambil waktu dari data aktivitas
+              String timeLabel = '';
+              try {
+                final item = _activityData[value.toInt()];
+                if (item['created_at'] != null) {
+                  DateTime date = DateTime.parse(item['created_at']);
+                  String format = range > 50 ? 'dd MMM' : 'HH:mm';
+                  timeLabel = DateFormat(format).format(date);
+                } else {
+                  timeLabel = '${value.toInt()}';
+                }
+              } catch (_) {
+                 timeLabel = '${value.toInt()}';
+              }
+
               return SideTitleWidget(
                 meta: meta,
                 space: 10,
                 child: Text(
-                  '${value.toInt()}',
+                  timeLabel,
                   style: const TextStyle(color: Colors.grey, fontSize: 9),
                 ),
               );

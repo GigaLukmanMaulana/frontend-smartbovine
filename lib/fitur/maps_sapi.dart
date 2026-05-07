@@ -204,42 +204,13 @@ class _MapSapiScreenState extends State<MapSapiScreen> {
               ),
             ),
 
-            // Nama Sapi & Label Live
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  "Sapi #${sapi['id_sapi'] ?? '1'}",
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 24,
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Row(
-                    children: [
-                      CircleAvatar(radius: 4, backgroundColor: Colors.green),
-                      SizedBox(width: 5),
-                      Text(
-                        "LIVE",
-                        style: TextStyle(
-                          color: Colors.green,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+            // Nama Sapi
+            Text(
+              "Sapi #${sapi['id_sapi'] ?? '1'}",
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 24,
+              ),
             ),
             Text(
               labelProfile,
@@ -555,24 +526,6 @@ class _MapSapiScreenState extends State<MapSapiScreen> {
               });
             },
           ),
-          // Icon Live Streaming / Realtime Indicator
-          Padding(
-            padding: EdgeInsets.only(right: 16),
-            child: Row(
-              children: [
-                CircleAvatar(radius: 4, backgroundColor: Colors.green),
-                SizedBox(width: 5),
-                Text(
-                  "LIVE",
-                  style: TextStyle(
-                    color: Colors.green,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          )
         ],
       ),
       body: _isLoading

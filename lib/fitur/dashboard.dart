@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'package:firebase_database/firebase_database.dart';
+import '../widgets/dashboard_skeleton.dart';
 import '../widgets/navbar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'scan_feses_screen.dart';
@@ -7,6 +10,7 @@ import 'kelolaiot.dart';
 import 'kelola_sapi.dart';
 import 'device_monitor.dart'; // Impor screen baru
 import '../services/perangkat_service.dart';
+import 'mitra_screen.dart';
 
 class Dashboard extends StatefulWidget {
   const Dashboard({super.key});
@@ -25,11 +29,42 @@ class _DashboardState extends State<Dashboard> {
   List<dynamic> _perangkatList = [];
   bool _isLoading = true;
 
+  // Notifikasi badge — listen real-time dari Firebase
+  int _notifCount = 0;
+  late final StreamSubscription<DatabaseEvent> _notifSubscription;
+
   @override
   void initState() {
     super.initState();
     _loadUserData();
     _fetchPerangkatData();
+    _listenNotifications();
+  }
+
+  @override
+  void dispose() {
+    _notifSubscription.cancel();
+    super.dispose();
+  }
+
+  /// Listen jumlah notifikasi BELUM DIBACA dari Firebase path 'notifikasi'
+  void _listenNotifications() {
+    final notifRef = FirebaseDatabase.instance.ref('notifikasi');
+    _notifSubscription = notifRef.onValue.listen((event) {
+      int count = 0;
+      if (event.snapshot.value != null && event.snapshot.value is Map) {
+        final data = event.snapshot.value as Map;
+        // Hanya hitung notifikasi yang belum dibaca
+        data.forEach((key, value) {
+          if (value is Map && value['dibaca'] != true) {
+            count++;
+          }
+        });
+      }
+      if (mounted) {
+        setState(() => _notifCount = count);
+      }
+    });
   }
 
   Future<void> _loadUserData() async {
@@ -42,6 +77,10 @@ class _DashboardState extends State<Dashboard> {
 
   Future<void> _fetchPerangkatData() async {
     setState(() => _isLoading = true);
+
+    // TODO: Hapus delay ini setelah selesai testing skeleton loader
+    await Future.delayed(const Duration(seconds: 1));
+
     final data = await PerangkatService.getPerangkat();
     if (mounted) {
       setState(() {
@@ -95,6 +134,17 @@ class _DashboardState extends State<Dashboard> {
                 );
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.handshake_outlined, color: Color(0xFF00796B)),
+              title: const Text('Mitra'),
+              onTap: () {
+                Navigator.pop(context); // tutup drawer dulu
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const MitraScreen()),
+                );
+              },
+            ),
             const Divider(),
             ListTile(
               leading: const Icon(Icons.logout, color: Colors.red),
@@ -133,10 +183,12 @@ class _DashboardState extends State<Dashboard> {
                 ),
               );
             },
-            icon: const Badge(
-              label: Text('1'),
-              child: Icon(Icons.notifications_none, color: Colors.black87),
-            ),
+            icon: _notifCount > 0
+              ? Badge(
+                  label: Text('$_notifCount'),
+                  child: const Icon(Icons.notifications_none, color: Colors.black87),
+                )
+              : const Icon(Icons.notifications_none, color: Colors.black87),
           ),
           Padding(
             padding: const EdgeInsets.only(right: 16),
@@ -160,7 +212,7 @@ class _DashboardState extends State<Dashboard> {
         onRefresh: _fetchPerangkatData,
         color: const Color(0xFF00796B),
         child: _isLoading 
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF00796B)))
+          ? const DashboardSkeleton()
           : _perangkatList.isEmpty 
             ? _buildEmptyState()
             : _buildDeviceList(),

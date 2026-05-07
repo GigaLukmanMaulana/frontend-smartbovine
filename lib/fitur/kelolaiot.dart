@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import '../widgets/navbar.dart';
 import '../services/perangkat_service.dart';
+import '../widgets/kelolaiot_skeleton.dart';
 import '../services/sapi_service.dart';
 import 'scan_feses_screen.dart';
+import 'dashboard.dart';
 
 class KelolaIotScreen extends StatefulWidget {
   const KelolaIotScreen({super.key});
@@ -387,7 +389,14 @@ class _KelolaIotScreenState extends State<KelolaIotScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Color(0xFF00796B)),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            // Pakai pushReplacement karena navbar memakai pushAndRemoveUntil
+            // yang menghapus semua route, jadi pop() akan blank hitam
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => const Dashboard()),
+            );
+          },
         ),
         title: const Text(
           'Kelola Perangkat IoT',
@@ -448,6 +457,11 @@ class _KelolaIotScreenState extends State<KelolaIotScreen> {
                 StreamBuilder(
                   stream: _dbRootRef.onValue,
                   builder: (context, AsyncSnapshot<DatabaseEvent> listSnapshot) {
+                    // Tampilkan skeleton saat menunggu data pertama dari Firebase
+                    if (listSnapshot.connectionState == ConnectionState.waiting) {
+                      return const KelolaIotSkeleton();
+                    }
+
                     List<Map<String, dynamic>> devices = [];
 
                     if (listSnapshot.hasData && listSnapshot.data?.snapshot.value != null) {
@@ -609,11 +623,7 @@ class _KelolaIotScreenState extends State<KelolaIotScreen> {
       bottomNavigationBar: CustomNavbar(
         selectedIndex: _selectedIndex,
         onItemSelected: (index) {
-          if (index != 2) {
-            if (index == 0) {
-              Navigator.pop(context);
-            }
-          }
+          // Navbar sudah handle navigasi sendiri via pushAndRemoveUntil
         },
       ),
     );

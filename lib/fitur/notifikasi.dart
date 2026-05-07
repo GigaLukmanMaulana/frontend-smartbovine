@@ -58,6 +58,27 @@ class _NotifikasiScreenState extends State<NotifikasiScreen> {
     }
   }
 
+  /// Format tanggal & jam lengkap: "7 Mei 2026, 15:30"
+  String _formatExactTime(dynamic timestamp) {
+    if (timestamp == null) return '';
+    try {
+      DateTime date = DateTime.fromMillisecondsSinceEpoch(int.parse(timestamp.toString()));
+      return DateFormat('d MMM yyyy, HH:mm', 'id_ID').format(date);
+    } catch (e) {
+      try {
+        DateTime date = DateTime.fromMillisecondsSinceEpoch(int.parse(timestamp.toString()));
+        return '${date.day}/${date.month}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+      } catch (_) {
+        return '';
+      }
+    }
+  }
+
+  /// Tandai notifikasi sebagai telah dibaca
+  void _tandaiDibaca(String key) {
+    _notifRef.child(key).update({'dibaca': true});
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -119,17 +140,15 @@ class _NotifikasiScreenState extends State<NotifikasiScreen> {
             return tsB.compareTo(tsA);
           });
 
-          // Pisahkan mendesak (< 1 jam) dan history (> 1 jam)
-          List<Map<String, dynamic>> mendesak = [];
-          List<Map<String, dynamic>> history = [];
+          // Pisahkan berdasarkan status dibaca
+          List<Map<String, dynamic>> belumDibaca = [];
+          List<Map<String, dynamic>> sudahDibaca = [];
 
           for (var item in notifList) {
-            int ts = int.tryParse(item['timestamp']?.toString() ?? '0') ?? 0;
-            Duration diff = DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(ts));
-            if (diff.inHours < 1) {
-              mendesak.add(item);
+            if (item['dibaca'] == true) {
+              sudahDibaca.add(item);
             } else {
-              history.add(item);
+              belumDibaca.add(item);
             }
           }
 
@@ -153,30 +172,33 @@ class _NotifikasiScreenState extends State<NotifikasiScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (mendesak.isNotEmpty) ...[
+                if (belumDibaca.isNotEmpty) ...[
                   const Text(
-                    'MENDESAK',
+                    'BELUM DIBACA',
                     style: TextStyle(
-                      color: Colors.grey,
+                      color: Colors.red,
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 12),
-                  ...mendesak.map((item) => Padding(
+                  ...belumDibaca.map((item) => Padding(
                     padding: const EdgeInsets.only(bottom: 16),
                     child: _buildNotificationCard(
-                      _getTitle(item['status']),
-                      _getDescription(item),
-                      _formatTimestamp(item['timestamp']),
+                      title: _getTitle(item['status']),
+                      description: _getDescription(item),
+                      timeBadge: _formatTimestamp(item['timestamp']),
+                      exactTime: _formatExactTime(item['timestamp']),
+                      notifKey: item['key'],
+                      isDibaca: false,
                     ),
                   )),
                   const SizedBox(height: 8),
                 ],
 
-                if (history.isNotEmpty) ...[
+                if (sudahDibaca.isNotEmpty) ...[
                   const Text(
-                    'HISTORY PERINGATAN',
+                    'SUDAH DIBACA',
                     style: TextStyle(
                       color: Colors.grey,
                       fontSize: 12,
@@ -184,12 +206,15 @@ class _NotifikasiScreenState extends State<NotifikasiScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  ...history.map((item) => Padding(
+                  ...sudahDibaca.map((item) => Padding(
                     padding: const EdgeInsets.only(bottom: 16),
                     child: _buildNotificationCard(
-                      _getTitle(item['status']),
-                      _getDescription(item),
-                      _formatTimestamp(item['timestamp']),
+                      title: _getTitle(item['status']),
+                      description: _getDescription(item),
+                      timeBadge: _formatTimestamp(item['timestamp']),
+                      exactTime: _formatExactTime(item['timestamp']),
+                      notifKey: item['key'],
+                      isDibaca: true,
                     ),
                   )),
                 ],
@@ -217,13 +242,22 @@ class _NotifikasiScreenState extends State<NotifikasiScreen> {
     return 'Suhu tubuh $namaSapi mencapai ${suhu.toStringAsFixed(1)}°C. Segera periksa kondisi fisik.';
   }
 
-  Widget _buildNotificationCard(String title, String description, String timeBadge) {
+  Widget _buildNotificationCard({
+    required String title,
+    required String description,
+    required String timeBadge,
+    required String exactTime,
+    required String notifKey,
+    required bool isDibaca,
+  }) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF5F5),
+        color: isDibaca ? const Color(0xFFF5F5F5) : const Color(0xFFFFF5F5),
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: const Color(0xFFFFEAEA)),
+        border: Border.all(
+          color: isDibaca ? Colors.grey.shade300 : const Color(0xFFFFEAEA),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -232,33 +266,40 @@ class _NotifikasiScreenState extends State<NotifikasiScreen> {
             children: [
               Container(
                 padding: const EdgeInsets.all(8),
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   color: Colors.white,
                   shape: BoxShape.circle,
+                  border: isDibaca
+                      ? Border.all(color: Colors.grey.shade300)
+                      : null,
                 ),
-                child: const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20),
+                child: Icon(
+                  isDibaca ? Icons.check_circle_outline : Icons.warning_amber_rounded,
+                  color: isDibaca ? Colors.green : Colors.red,
+                  size: 20,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 15,
-                    color: Colors.black87,
+                    color: isDibaca ? Colors.grey : Colors.black87,
                   ),
                 ),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFCDD2),
+                  color: isDibaca ? Colors.grey.shade200 : const Color(0xFFFFCDD2),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
                   timeBadge,
-                  style: const TextStyle(
-                    color: Colors.red,
+                  style: TextStyle(
+                    color: isDibaca ? Colors.grey : Colors.red,
                     fontSize: 10,
                     fontWeight: FontWeight.bold,
                   ),
@@ -266,25 +307,55 @@ class _NotifikasiScreenState extends State<NotifikasiScreen> {
               ),
             ],
           ),
+          // Waktu lengkap
+          if (exactTime.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 44, top: 4),
+              child: Row(
+                children: [
+                  Icon(Icons.access_time, size: 12, color: Colors.grey.shade500),
+                  const SizedBox(width: 4),
+                  Text(
+                    exactTime,
+                    style: TextStyle(
+                      color: Colors.grey.shade500,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           const SizedBox(height: 12),
           Text(
             description,
-            style: const TextStyle(color: Colors.black87, fontSize: 13, height: 1.4),
+            style: TextStyle(
+              color: isDibaca ? Colors.grey : Colors.black87,
+              fontSize: 13,
+              height: 1.4,
+            ),
           ),
           const SizedBox(height: 16),
           Row(
             children: [
               Expanded(
-                child: OutlinedButton(
-                  onPressed: () {},
+                child: OutlinedButton.icon(
+                  onPressed: isDibaca
+                      ? null
+                      : () => _tandaiDibaca(notifKey),
+                  icon: Icon(
+                    isDibaca ? Icons.check : Icons.mark_email_read_outlined,
+                    size: 16,
+                  ),
+                  label: Text(isDibaca ? 'Sudah Dibaca' : 'Telah Dibaca'),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.red,
-                    side: const BorderSide(color: Color(0xFFFFCDD2)),
+                    foregroundColor: isDibaca ? Colors.green : const Color(0xFF00796B),
+                    side: BorderSide(
+                      color: isDibaca ? Colors.green.shade200 : const Color(0xFFB9DFD2),
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(20),
                     ),
                   ),
-                  child: const Text('Abaikan'),
                 ),
               ),
               const SizedBox(width: 12),
